@@ -19,7 +19,7 @@ type User struct {
 }
 
 var (
-	secretKey = "Ключ"
+	secretKey = []byte("ключ")
 )
 
 // хеширования пароля с "солью"
@@ -36,27 +36,29 @@ func HashPassword(password string) (string, error) {
 func VerifyPassword(hashedPassword, password string) error {
 	return bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
 }
-func createJWTtocken(w http.ResponseWriter, user User) string {
+func createJWTocken(w http.ResponseWriter, user User) []byte {
 	// Создание токена
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user": user.Login,                            // login
-		"aud":  user.Role,                             // role
+		"role": user.Role,                             // role
 		"iss":  time.Now().Add(time.Hour * 72).Unix(), // Issued at
 	})
 
 	tokenString, err := token.SignedString(secretKey)
 	if err != nil {
+		fmt.Fprint(w, err)
 		http.Error(w, "Ошибка при создании токена", http.StatusInternalServerError)
-		return ""
 	}
-	return tokenString
+
+	JWTocken, err := json.Marshal(tokenString)
+	return JWTocken
 }
 
-func verifyJWT(w http.ResponseWriter, req *http.Request) {
+func verifyJWT(w http.ResponseWriter, req *http.Request) bool {
 	tokenString := req.Header.Get("Authorization")
 	if tokenString == "" {
 		http.Error(w, "Токен не предоставлен", http.StatusUnauthorized)
-		return //false
+		return false
 	}
 
 	// Проверка токена
@@ -69,19 +71,24 @@ func verifyJWT(w http.ResponseWriter, req *http.Request) {
 
 	if err != nil || !parsedToken.Valid {
 		http.Error(w, "Недействительный токен", http.StatusUnauthorized)
-		fmt.Fprint(w, tokenString)
-		return //false
+		fmt.Fprintf(w, "\n%s\n%s", err, !parsedToken.Valid)
+		return false
 	}
 
 	// Если токен действителен, можно получить данные
 	if _, ok := parsedToken.Claims.(jwt.MapClaims); ok {
 		fmt.Fprint(w, "Все ок")
-		return //true
+		return true
 	}
-	//return false
+	return false
 }
 
 func verifyUser(w http.ResponseWriter, req *http.Request) {
+	type Responce struct {
+		jwt  []byte `"json": JWTocken`
+		role string `"json": role`
+	}
+
 	formData := postParser(w, req)
 
 	user, err := GetUserData(formData["login"])
@@ -93,13 +100,20 @@ func verifyUser(w http.ResponseWriter, req *http.Request) {
 
 	err = VerifyPassword(user.Password, formData["password"])
 	if err != nil {
-		fmt.Fprintf(w, "err: %s; %s, %s", err, user.Login, user.Password)
+		fmt.Print(err)
 		http.Error(w, "Неверный пароль", http.StatusUnauthorized)
 		return
 	}
 
-	message, _ := json.Marshal("approved")
-	w.Write(message)
+	response := Responce{
+		jwt:  createJWTocken(w, *user),
+		role: user.Role,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		fmt.Print("1")
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func createUser(w http.ResponseWriter, req *http.Request) {
@@ -143,20 +157,6 @@ func postParser(w http.ResponseWriter, req *http.Request) map[string]string {
 	return formData
 }
 
-func getStandartStat(w http.ResponseWriter, req *http.Request) {
-	formData := postParser(w, req)
-
-	jsonData, err := GetStandartStat(formData)
-
-	if err != nil {
-		fmt.Fprintf(w, "Возникла ошибка: %s", err)
-		return
-	}
-
-	w.Write(jsonData)
-
-}
-
 func getRegions(w http.ResponseWriter, req *http.Request) {
 	jsonData, err := GetRegions()
 
@@ -168,6 +168,43 @@ func getRegions(w http.ResponseWriter, req *http.Request) {
 	w.Write(jsonData)
 }
 
+func getFireTypes(w http.ResponseWriter, req *http.Request) {
+	jsonData, err := GetFireTypes()
+
+	if err != nil {
+		fmt.Fprintf(w, "Возникла ошибка: %s", err)
+		return
+	}
+
+	w.Write(jsonData)
+}
+
+func getStandartStat(w http.ResponseWriter, req *http.Request) {
+	formData := postParser(w, req)
+
+	var (
+		jsonData []byte
+		err      error
+	)
+
+	if len(formData) > 1 {
+		jsonData, err = GetStandartStat(formData)
+	} else {
+		jsonData, err = GetStandartStatWithTypes(formData)
+	}
+
+	if err != nil {
+		fmt.Fprintf(w, "Возникла ошибка: %s", err)
+		return
+	}
+
+	w.Write(jsonData)
+}
+
+func deleteUser(w http.ResponseWriter, req *http.Request) {
+
+}
+
 func main() {
 	mux := http.NewServeMux()
 
@@ -175,6 +212,7 @@ func main() {
 	mux.HandleFunc("/api/verifyUser", verifyUser)
 	mux.HandleFunc("/api/getStandartScoreStat", getStandartStat)
 	mux.HandleFunc("/api/getRegions", getRegions)
+	mux.HandleFunc("/api/getFireTypes", getFireTypes)
 
 	http.ListenAndServe(":8080", mux)
 }
