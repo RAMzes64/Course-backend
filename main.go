@@ -13,9 +13,9 @@ import (
 )
 
 type User struct {
-	Login    string
-	Password string
-	Role     string
+	Login    string `json: "login"`
+	Password string `json: "password"`
+	Role     string `json: "role"`
 }
 
 var (
@@ -33,25 +33,22 @@ func HashPassword(password string) (string, error) {
 	return string(hashedPassword), nil
 }
 
-func VerifyPassword(hashedPassword, password string) error {
-	return bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
-}
-func createJWTocken(w http.ResponseWriter, user User) []byte {
-	// Создание токена
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user": user.Login,                            // login
-		"role": user.Role,                             // role
-		"iss":  time.Now().Add(time.Hour * 72).Unix(), // Issued at
-	})
-
-	tokenString, err := token.SignedString(secretKey)
-	if err != nil {
-		fmt.Fprint(w, err)
-		http.Error(w, "Ошибка при создании токена", http.StatusInternalServerError)
+func verifyUser(formData map[string]string) (*User, error) {
+	user, err := GetUserData(formData["login"])
+	if err != nil || user == nil {
+		return nil, err
 	}
 
-	JWTocken, err := json.Marshal(tokenString)
-	return JWTocken
+	err = VerifyPassword(user.Password, formData["password"])
+	if err != nil {
+		return nil, err
+	}
+
+	return user, nil
+}
+
+func VerifyPassword(hashedPassword, password string) error {
+	return bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
 }
 
 func verifyJWT(w http.ResponseWriter, req *http.Request) bool {
@@ -83,37 +80,32 @@ func verifyJWT(w http.ResponseWriter, req *http.Request) bool {
 	return false
 }
 
-func verifyUser(w http.ResponseWriter, req *http.Request) {
-	type Responce struct {
-		jwt  []byte `"json": JWTocken`
-		role string `"json": role`
-	}
+func createJWTocken(w http.ResponseWriter, user User) []byte {
+	// Создание токена
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user": user.Login,                            // login
+		"role": user.Role,                             // role
+		"iss":  time.Now().Add(time.Hour * 72).Unix(), // Issued at
+	})
 
-	formData := postParser(w, req)
-
-	user, err := GetUserData(formData["login"])
-	if err != nil || user == nil {
-		fmt.Fprint(w, err)
-		http.Error(w, "Неверный логин", http.StatusUnauthorized)
-		return
-	}
-
-	err = VerifyPassword(user.Password, formData["password"])
+	tokenString, err := token.SignedString(secretKey)
 	if err != nil {
-		fmt.Print(err)
-		http.Error(w, "Неверный пароль", http.StatusUnauthorized)
-		return
+		fmt.Fprint(w, err)
+		http.Error(w, "Ошибка при создании токена", http.StatusInternalServerError)
 	}
 
-	response := Responce{
-		jwt:  createJWTocken(w, *user),
-		role: user.Role,
-	}
+	JWTocken, err := json.Marshal(tokenString)
+	return JWTocken
+}
 
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		fmt.Print("1")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+func loginValidation(w http.ResponseWriter, req *http.Request) {
+	formData := postParser(w, req)
+	user, err := verifyUser(formData)
+	if err != nil {
+		http.Error(w, "Неверный логин или пароль", http.StatusUnauthorized)
 	}
+	json, err := json.Marshal(user.Role)
+	w.Write(json)
 }
 
 func createUser(w http.ResponseWriter, req *http.Request) {
@@ -201,18 +193,35 @@ func getStandartStat(w http.ResponseWriter, req *http.Request) {
 	w.Write(jsonData)
 }
 
-func deleteUser(w http.ResponseWriter, req *http.Request) {
+func addData(w http.ResponseWriter, req *http.Request) {
+	fmt.Println("Работает1")
+	formData := postParser(w, req)
+	user, err := verifyUser(formData)
+	if user == nil || err != nil {
+		fmt.Println("Не работает1")
+		fmt.Fprintf(w, "error: %s, user: %s")
+		return
+	}
 
+	err = InsertIntoFires(formData, user.Login)
+	if err != nil {
+		fmt.Printf("Не работает2 %s", err)
+		http.Error(w, "Неверный формат данных", http.StatusBadRequest)
+		return
+	}
+	response, err := json.Marshal("ok")
+	w.Write(response)
 }
 
 func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/registration", createUser)
-	mux.HandleFunc("/api/verifyUser", verifyUser)
+	mux.HandleFunc("/api/verifyUser", loginValidation)
 	mux.HandleFunc("/api/getStandartScoreStat", getStandartStat)
 	mux.HandleFunc("/api/getRegions", getRegions)
 	mux.HandleFunc("/api/getFireTypes", getFireTypes)
+	mux.HandleFunc("/api/addData", addData)
 
 	http.ListenAndServe(":8080", mux)
 }

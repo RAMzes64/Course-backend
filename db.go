@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"sync"
 )
 
@@ -230,4 +231,37 @@ func GetFireTypes() ([]byte, error) {
 		dt = append(dt, data)
 	}
 	return json.Marshal(&dt) //Конвертируем в json
+}
+
+func InsertIntoFires(formData map[string]string, login string) error {
+	fmt.Println("Работает2")
+
+	db, err := getInstance()
+
+	lon, err := strconv.ParseFloat(formData["lon"], 64)
+	if err != nil {
+		fmt.Printf("Ошибка парсинга lon: %s\n", err)
+		return err
+	}
+
+	lat, err := strconv.ParseFloat(formData["lat"], 64)
+	if err != nil {
+		fmt.Printf("Ошибка парсинга lat: %s\n", err)
+		return err
+	}
+
+	if err != nil {
+		fmt.Println("Не работает1.1")
+		return errors.New("500")
+	}
+
+	_, err = db.connection.Exec(`CALL addFireData(?, ?, ?, ?, ?, ?)`, formData["dt"], formData["type_id"], lon, lat, formData["region_id"], login)
+
+	if err != nil {
+		fmt.Printf("Не работает1.2 %s", err)
+		return err
+	}
+
+	return nil
+
 }
